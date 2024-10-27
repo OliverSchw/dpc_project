@@ -8,6 +8,7 @@ import equinox as eqx
 import diffrax
 import optax
 
+from tqdm import tqdm
 
 # loss construct from (loss and soft_pen) (done)
 # rollout (done)
@@ -15,7 +16,7 @@ import optax
 # fit (done)
 
 
-@eqx.filter_grad
+@eqx.filter_value_and_grad
 def grad_loss(policy, env, init_obs, ref_obs, horizon_length, featurize, ref_loss_fun, penalty_fun, ref_loss_weight=1):
     obs, acts = vmap_rollout_traj_env(policy, init_obs, ref_obs, horizon_length, env, featurize)
     loss = vmap_compute_loss(obs, ref_obs, featurize, ref_loss_fun, penalty_fun, weighting=ref_loss_weight)
@@ -36,7 +37,7 @@ def make_step(
     opt_state,
     ref_loss_weight=1,
 ):
-    grads = grad_loss(
+    loss, grads = grad_loss(
         policy,
         env,
         init_obs,
@@ -49,7 +50,7 @@ def make_step(
     )
     updates, opt_state = optim.update(grads, opt_state)
     policy = eqx.apply_updates(policy, updates)
-    return policy, opt_state
+    return policy, opt_state, loss
 
 
 @eqx.filter_jit
@@ -73,9 +74,10 @@ def vmap_compute_loss(sim_obs, ref_obs, featurize, ref_loss_fun, penalty_fun, we
 @eqx.filter_jit
 def exc_env_data_generation_single(env, rng, traj_len):
     rng, subkey = jax.random.split(rng)
-    ref_obs, _ = env.reset(env.env_properties)  # , subkey
+    ref_obs, _ = env.reset(env.env_properties, subkey)  #
     rng, subkey = jax.random.split(rng)
     init_obs, _ = env.reset(env.env_properties, subkey)  #
+    init_obs = init_obs.at[2].set((3000 / 60 * 2 * jnp.pi) / (2 * jnp.pi * 3 * 11000 / 60))
 
     return init_obs, ref_obs, rng
 
@@ -122,43 +124,43 @@ def vmap_rollout_traj_env(policy, init_obs, ref_obs, horizon_length, env, featur
     return observations, actions
 
 
-# # @eqx.filter_jit
-# def fit(
-#     policy,
-#     train_steps,
-#     env,
-#     rng,
-#     horizon_length,
-#     featurize,
-#     ref_loss_fun,
-#     penalty_fun,
-#     optim,
-#     init_opt_state,
-#     ref_loss_weight=1,
-# ):
+def fit_non_jit(
+    policy,
+    train_steps,
+    env,
+    rng,
+    horizon_length,
+    featurize,
+    ref_loss_fun,
+    penalty_fun,
+    optim,
+    init_opt_state,
+    ref_loss_weight=1,
+):
+    key = rng
+    policy_state = policy
+    opt_state = init_opt_state
+    losses = []
 
-#     opt_state = init_opt_state
-#     key = rng
-#     losses = []
+    for i in tqdm(range(train_steps)):
 
-#     for i in range(train_steps):
-#         init_obs, ref_obs, key = data_generation(env, key)
-#         policy, opt_state = make_step(
-#             policy,
-#             env,
-#             init_obs,
-#             ref_obs,
-#             horizon_length,
-#             featurize,
-#             ref_loss_fun,
-#             penalty_fun,
-#             optim,
-#             opt_state,
-#             ref_loss_weight=ref_loss_weight,
-#         )
-#         # losses.append(loss.item())
+        init_obs, ref_obs, key = data_generation(env, key)
 
-#     return policy, opt_state, key, losses
+        policy_state, opt_state, loss = make_step(
+            policy_state,
+            env,
+            init_obs,
+            ref_obs,
+            horizon_length,
+            featurize,
+            ref_loss_fun,
+            penalty_fun,
+            optim,
+            opt_state,
+            ref_loss_weight=ref_loss_weight,
+        )
+        losses.append(loss)
+    return policy_state, opt_state, key, losses
 
 
 @eqx.filter_jit
@@ -185,7 +187,7 @@ def fit(
 
         init_obs, ref_obs, key = data_generation(env, key)
 
-        new_policy_state, new_opt_state = make_step(
+        new_policy_state, new_opt_state, _ = make_step(
             policy_state,
             env,
             init_obs,
@@ -237,4 +239,22 @@ class DPCTrainer(eqx.Module):
             ref_loss_weight=self.ref_loss_weight,
         )
 
-        return final_policy, final_opt_state, final_key
+        return final_policy, final_opt_state, final_key, None
+
+    def fit_non_jit(self, policy, env, key, opt_state):
+        assert self.batch_size == key.shape[0]
+        final_policy, final_opt_state, final_key, losses = fit_non_jit(
+            policy=policy,
+            train_steps=self.train_steps,
+            env=env,
+            rng=key,
+            horizon_length=self.horizon_length,
+            featurize=self.featurize,
+            ref_loss_fun=self.ref_loss,
+            penalty_fun=self.constr_penalty,
+            optim=self.policy_optimizer,
+            init_opt_state=opt_state,
+            ref_loss_weight=self.ref_loss_weight,
+        )
+
+        return final_policy, final_opt_state, final_key, losses
