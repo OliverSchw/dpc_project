@@ -9,6 +9,7 @@ import diffrax
 import optax
 
 from tqdm import tqdm
+from utils.interactions import vmap_rollout_traj_env
 
 # loss construct from (loss and soft_pen) (done)
 # rollout (done)
@@ -83,51 +84,17 @@ def exc_env_data_generation_single(env, rng, traj_len):
 
 
 @eqx.filter_jit
-def data_generation(env, rng, traj_len=None):
+def data_generation(env, data_gen_single, rng, traj_len=None):
     # TODO implement ref_traj other than constants -> traj_len
-    init_obs, ref_obs, key = jax.vmap(exc_env_data_generation_single, in_axes=(None, 0, None))(env, rng, traj_len)
+    init_obs, ref_obs, key = jax.vmap(data_gen_single, in_axes=(None, 0, None))(env, rng, traj_len)
     return init_obs, ref_obs, key
-
-
-def rollout_traj_node(init_obs, ref_obs, env, policy):
-    raise (NotImplementedError)
-
-
-@eqx.filter_jit
-def rollout_traj_env(policy, init_obs, ref_obs, horizon_length, env, featurize):
-    # TODO change for non constant refs
-    init_state = env.generate_state_from_observation(init_obs, env.env_properties)
-
-    def body_fun(carry, _):
-
-        obs, state = carry
-
-        policy_in = featurize(obs, ref_obs)
-
-        action = policy(policy_in)
-
-        obs, state = env.step(state, action, env.env_properties)
-
-        return (obs, state), (obs, action)
-
-    _, (observations, actions) = jax.lax.scan(body_fun, (init_obs, init_state), None, horizon_length)
-    observations = jnp.concatenate([init_obs[None, :], observations], axis=0)
-
-    return observations, actions
-
-
-@eqx.filter_jit
-def vmap_rollout_traj_env(policy, init_obs, ref_obs, horizon_length, env, featurize):
-    observations, actions = jax.vmap(rollout_traj_env, in_axes=(None, 0, 0, None, None, None))(
-        policy, init_obs, ref_obs, horizon_length, env, featurize
-    )
-    return observations, actions
 
 
 def fit_non_jit(
     policy,
     train_steps,
     env,
+    data_gen_sin,
     rng,
     horizon_length,
     featurize,
@@ -144,7 +111,7 @@ def fit_non_jit(
 
     for i in tqdm(range(train_steps)):
 
-        init_obs, ref_obs, key = data_generation(env, key)
+        init_obs, ref_obs, key = data_generation(env, data_gen_sin, key)
 
         policy_state, opt_state, loss = make_step(
             policy_state,
@@ -216,6 +183,7 @@ class DPCTrainer(eqx.Module):
     batch_size: jnp.int32
     train_steps: jnp.int32
     horizon_length: jnp.int32
+    data_gen_sin: Callable
     featurize: Callable
     policy_optimizer: optax._src.base.GradientTransformationExtraArgs
     ref_loss: Callable
@@ -247,6 +215,7 @@ class DPCTrainer(eqx.Module):
             policy=policy,
             train_steps=self.train_steps,
             env=env,
+            data_gen_sin=self.data_gen_sin,
             rng=key,
             horizon_length=self.horizon_length,
             featurize=self.featurize,
