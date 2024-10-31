@@ -84,9 +84,9 @@ def exc_env_data_generation_single(env, rng, traj_len):
 
 
 @eqx.filter_jit
-def data_generation(env, data_gen_single, rng, traj_len=None):
+def data_generation(env, reset_env, data_gen_single, rng, traj_len=None):
     # TODO implement ref_traj other than constants -> traj_len
-    init_obs, ref_obs, key = jax.vmap(data_gen_single, in_axes=(None, 0, None))(env, rng, traj_len)
+    init_obs, ref_obs, key = jax.vmap(data_gen_single, in_axes=(None, None, 0, None))(env, reset_env, rng, traj_len)
     return init_obs, ref_obs, key
 
 
@@ -94,6 +94,7 @@ def fit_non_jit(
     policy,
     train_steps,
     env,
+    reset_env,
     data_gen_sin,
     rng,
     horizon_length,
@@ -111,7 +112,7 @@ def fit_non_jit(
 
     for i in tqdm(range(train_steps)):
 
-        init_obs, ref_obs, key = data_generation(env, data_gen_sin, key)
+        init_obs, ref_obs, key = data_generation(env, reset_env, data_gen_sin, key)
 
         policy_state, opt_state, loss = make_step(
             policy_state,
@@ -183,6 +184,7 @@ class DPCTrainer(eqx.Module):
     batch_size: jnp.int32
     train_steps: jnp.int32
     horizon_length: jnp.int32
+    reset_env: Callable
     data_gen_sin: Callable
     featurize: Callable
     policy_optimizer: optax._src.base.GradientTransformationExtraArgs
@@ -215,6 +217,7 @@ class DPCTrainer(eqx.Module):
             policy=policy,
             train_steps=self.train_steps,
             env=env,
+            reset_env=self.reset_env,
             data_gen_sin=self.data_gen_sin,
             rng=key,
             horizon_length=self.horizon_length,
