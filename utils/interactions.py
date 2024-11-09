@@ -44,19 +44,22 @@ def rollout_traj_env(policy, init_obs, ref_obs, horizon_length, env, featurize):
         ref_o = ref_obs
         assert ref_obs.shape[0] == horizon_length
 
+    _, init_feat_state = featurize(init_obs, ref_o[0])
+    init_feat_state = jnp.zeros_like(init_feat_state)
+
     def body_fun(carry, ref):
 
-        obs, state = carry
+        obs, state, feat_state = carry
 
-        policy_in = featurize(obs, ref)
+        policy_in, feat_state = featurize(obs, ref, feat_state)
 
         action = policy(policy_in)
 
         obs, state = env.step(state, action, env.env_properties)
 
-        return (obs, state), (obs, action)
+        return (obs, state, feat_state), (obs, action)
 
-    _, (observations, actions) = jax.lax.scan(body_fun, (init_obs, init_state), ref_o, horizon_length)
+    _, (observations, actions) = jax.lax.scan(body_fun, (init_obs, init_state, init_feat_state), ref_o, horizon_length)
     observations = jnp.concatenate([init_obs[None, :], observations], axis=0)
 
     return observations, actions

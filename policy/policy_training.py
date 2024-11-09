@@ -56,7 +56,7 @@ def make_step(
 
 @eqx.filter_jit
 def compute_loss(sim_obs, ref_obs, featurize, ref_loss_fun, penalty_fun, weighting=0.9):
-    feat_obs = jax.vmap(featurize, in_axes=(0, None))(sim_obs, ref_obs)
+    feat_obs, _ = jax.vmap(featurize, in_axes=(0, None))(sim_obs, ref_obs)
     ref_loss = ref_loss_fun(feat_obs)
     penalty_loss = penalty_fun(feat_obs)
     loss = (weighting) * ref_loss + (1 - weighting) * penalty_loss
