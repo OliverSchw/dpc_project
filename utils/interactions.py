@@ -35,7 +35,7 @@ from tqdm import tqdm
 
 
 @eqx.filter_jit
-def rollout_traj_env(policy, init_obs, ref_obs, horizon_length, env, featurize):
+def rollout_traj_env_policy(policy, init_obs, ref_obs, horizon_length, env, featurize):
     init_state = env.generate_state_from_observation(init_obs, env.env_properties)
 
     if len(ref_obs.shape) == 1:
@@ -66,12 +66,21 @@ def rollout_traj_env(policy, init_obs, ref_obs, horizon_length, env, featurize):
 
 
 @eqx.filter_jit
-def vmap_rollout_traj_env(policy, init_obs, ref_obs, horizon_length, env, featurize):
-    observations, actions = jax.vmap(rollout_traj_env, in_axes=(None, 0, 0, None, None, None))(
+def vmap_rollout_traj_env_policy(policy, init_obs, ref_obs, horizon_length, env, featurize):
+    observations, actions = jax.vmap(rollout_traj_env_policy, in_axes=(None, 0, 0, None, None, None))(
         policy, init_obs, ref_obs, horizon_length, env, featurize
     )
     return observations, actions
 
 
-def rollout_traj_node(init_obs, ref_obs, env, policy):
-    raise (NotImplementedError)
+def rollout_traj_node(model, featurize, init_obs, actions, tau):
+    feat_obs = featurize(init_obs)
+    return model(feat_obs, actions, tau)
+
+
+@eqx.filter_jit
+def vmap_rollout_traj_node(model, featurize, init_obs, actions, tau):
+    observations = jax.vmap(rollout_traj_node, in_axes=(None, None, 0, 0, None))(
+        model, featurize, init_obs, actions, tau
+    )
+    return observations

@@ -5,6 +5,8 @@ import jax.numpy as jnp
 import equinox as eqx
 import diffrax
 
+from typing import Callable
+
 
 class MLP(eqx.Module):
 

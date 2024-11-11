@@ -9,7 +9,7 @@ import diffrax
 import optax
 
 from tqdm import tqdm
-from utils.interactions import vmap_rollout_traj_env
+from utils.interactions import vmap_rollout_traj_env_policy
 
 # loss construct from (loss and soft_pen) (done)
 # rollout (done)
@@ -19,7 +19,7 @@ from utils.interactions import vmap_rollout_traj_env
 
 @eqx.filter_value_and_grad
 def grad_loss(policy, env, init_obs, ref_obs, horizon_length, featurize, ref_loss_fun, penalty_fun, ref_loss_weight=1):
-    obs, acts = vmap_rollout_traj_env(policy, init_obs, ref_obs, horizon_length, env, featurize)
+    obs, acts = vmap_rollout_traj_env_policy(policy, init_obs, ref_obs, horizon_length, env, featurize)
     loss = vmap_compute_loss(obs, ref_obs, featurize, ref_loss_fun, penalty_fun, weighting=ref_loss_weight)
     return loss
 
@@ -72,15 +72,15 @@ def vmap_compute_loss(sim_obs, ref_obs, featurize, ref_loss_fun, penalty_fun, we
     return loss
 
 
-@eqx.filter_jit
-def exc_env_data_generation_single(env, rng, traj_len):
-    rng, subkey = jax.random.split(rng)
-    ref_obs, _ = env.reset(env.env_properties, subkey)  #
-    rng, subkey = jax.random.split(rng)
-    init_obs, _ = env.reset(env.env_properties, subkey)  #
-    init_obs = init_obs.at[2].set((3000 / 60 * 2 * jnp.pi) / (2 * jnp.pi * 3 * 11000 / 60))
+# @eqx.filter_jit
+# def exc_env_data_generation_single(env, rng, traj_len):
+#     rng, subkey = jax.random.split(rng)
+#     ref_obs, _ = env.reset(env.env_properties, subkey)  #
+#     rng, subkey = jax.random.split(rng)
+#     init_obs, _ = env.reset(env.env_properties, subkey)  #
+#     init_obs = init_obs.at[2].set((3000 / 60 * 2 * jnp.pi) / (2 * jnp.pi * 3 * 11000 / 60))
 
-    return init_obs, ref_obs, rng
+#     return init_obs, ref_obs, rng
 
 
 @eqx.filter_jit
