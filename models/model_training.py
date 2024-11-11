@@ -147,7 +147,7 @@ class ModelTrainer(eqx.Module):
     
 # NODE learning di_dt or directly i
 # long array or batched data 
-# if limited data traj probably long array more suitable
+# limited predefined data traj? if yes probably long array more suitable
 
 # if generating data while training batched_data version like in policy training
 #   -> same sequence length for model and policy training
