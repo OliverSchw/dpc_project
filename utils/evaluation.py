@@ -16,7 +16,7 @@ from utils.signals import steps_ref_traj
 from utils.interactions import rollout_traj_env_policy, rollout_traj_node_policy
 
 
-def steps_eval_env(env, reset_fun, policy, featurize, key, ref_len, init_obs_key=None, step_lens=[50, 200]):
+def steps_eval(env, reset_fun, policy, featurize, key, ref_len, init_obs_key=None, step_lens=[50, 200]):
     obs_ref = steps_ref_traj(env, reset_fun, key, ref_len, step_lens=step_lens)
     init_obs = reset_fun(env, init_obs_key)
     obs, acts = rollout_traj_env_policy(policy, init_obs, obs_ref, ref_len, env, featurize)

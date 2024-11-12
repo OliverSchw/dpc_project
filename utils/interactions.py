@@ -91,7 +91,7 @@ def rollout_traj_node_policy(policy, node, tau, init_obs, ref_obs, horizon_lengt
         return (obs, feat_state), (obs, action)
 
     _, (observations, actions) = jax.lax.scan(body_fun, (init_feat_obs, init_feat_state), ref_o, horizon_length)
-    observations = jnp.concatenate([init_obs[None, :], observations], axis=0)
+    observations = jnp.concatenate([init_feat_obs[None, :], observations], axis=0)
 
     return observations, actions
 
