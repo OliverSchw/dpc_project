@@ -66,6 +66,37 @@ def rollout_traj_env_policy(policy, init_obs, ref_obs, horizon_length, env, feat
 
 
 @eqx.filter_jit
+def rollout_traj_node_policy(policy, node, tau, init_obs, ref_obs, horizon_length, featurize_policy, featurize_node):
+
+    if len(ref_obs.shape) == 1:
+        ref_o = jnp.repeat(ref_obs[None, :], horizon_length, axis=0)
+    else:
+        ref_o = ref_obs
+        assert ref_obs.shape[0] == horizon_length
+
+    _, init_feat_state = featurize_policy(init_obs, ref_o[0])
+    init_feat_state = jnp.zeros_like(init_feat_state)
+    init_feat_obs = featurize_node(init_obs)
+
+    def body_fun(carry, ref):
+
+        obs, feat_state = carry
+
+        policy_in, feat_state = featurize_policy(obs, ref, feat_state)
+
+        action = policy(policy_in)
+
+        obs = node.step(obs, action, tau)
+
+        return (obs, feat_state), (obs, action)
+
+    _, (observations, actions) = jax.lax.scan(body_fun, (init_feat_obs, init_feat_state), ref_o, horizon_length)
+    observations = jnp.concatenate([init_obs[None, :], observations], axis=0)
+
+    return observations, actions
+
+
+@eqx.filter_jit
 def vmap_rollout_traj_env_policy(policy, init_obs, ref_obs, horizon_length, env, featurize):
     observations, actions = jax.vmap(rollout_traj_env_policy, in_axes=(None, 0, 0, None, None, None))(
         policy, init_obs, ref_obs, horizon_length, env, featurize

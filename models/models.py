@@ -6,7 +6,7 @@ import equinox as eqx
 import optax
 
 
-class MLP(eqx.Module):
+class MLP_lin(eqx.Module):
     # TODO different output layers
     layers: list[eqx.nn.Linear]
 
@@ -23,11 +23,11 @@ class MLP(eqx.Module):
 
 
 class NeuralEulerODE(eqx.Module):
-    func: MLP
+    func: MLP_lin
 
     def __init__(self, layer_sizes, key, **kwargs):
         super().__init__(**kwargs)
-        self.func = MLP(layer_sizes=layer_sizes, key=key)
+        self.func = MLP_lin(layer_sizes=layer_sizes, key=key)
 
     def step(self, obs, action, tau):
         obs_act = jnp.hstack([obs, action])

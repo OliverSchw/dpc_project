@@ -24,20 +24,20 @@ class MLP(eqx.Module):
         return jnp.tanh(self.layers[-1](x))
 
 
-class MLP2(eqx.Module):
-    mlp: eqx.nn.MLP
+# class MLP2(eqx.Module):
+#     mlp: eqx.nn.MLP
 
-    def __init__(self, in_dim, out_dim, width_size, depth, *, key, **kwargs):
-        super().__init__(**kwargs)
-        self.mlp = eqx.nn.MLP(
-            in_size=in_dim,
-            out_size=out_dim,
-            width_size=width_size,
-            depth=depth,
-            final_activation=jnn.hard_tanh,
-            key=key,
-        )
-        # activation=jnn.leaky_relu,
+#     def __init__(self, in_dim, out_dim, width_size, depth, *, key, **kwargs):
+#         super().__init__(**kwargs)
+#         self.mlp = eqx.nn.MLP(
+#             in_size=in_dim,
+#             out_size=out_dim,
+#             width_size=width_size,
+#             depth=depth,
+#             final_activation=jnn.hard_tanh,
+#             key=key,
+#         )
+#         # activation=jnn.leaky_relu,
 
-    def __call__(self, feat_obs):
-        return self.mlp(feat_obs)
+#     def __call__(self, feat_obs):
+#         return self.mlp(feat_obs)

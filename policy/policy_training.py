@@ -136,6 +136,8 @@ def fit(
     policy,
     train_steps,
     env,
+    reset_env,
+    data_gen_sin,
     rng,
     horizon_length,
     featurize,
@@ -153,7 +155,7 @@ def fit(
         dynamic_policy_state, opt_state, key = carry
         policy_state = eqx.combine(static_policy_state, dynamic_policy_state)
 
-        init_obs, ref_obs, key = data_generation(env, key)
+        init_obs, ref_obs, key = data_generation(env, reset_env, data_gen_sin, key)
 
         new_policy_state, new_opt_state, _ = make_step(
             policy_state,
@@ -199,6 +201,8 @@ class DPCTrainer(eqx.Module):
             policy=policy,
             train_steps=self.train_steps,
             env=env,
+            reset_env=self.reset_env,
+            data_gen_sin=self.data_gen_sin,
             rng=key,
             horizon_length=self.horizon_length,
             featurize=self.featurize,
