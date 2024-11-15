@@ -11,9 +11,9 @@ import optax
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-from utils.visualization import plot_i_dq_ref_tracking_time
+from utils.visualization import plot_i_dq_ref_tracking_time, plot_2_i_dq_ref_tracking_time
 from utils.signals import steps_ref_traj
-from utils.interactions import rollout_traj_env_policy, rollout_traj_node_policy
+from utils.interactions import rollout_traj_env, rollout_traj_node, rollout_traj_env_policy, rollout_traj_node_policy
 
 
 def steps_eval(env, reset_fun, policy, featurize, key, ref_len, init_obs_key=None, step_lens=[50, 200]):
@@ -46,3 +46,11 @@ def steps_eval_node(
     fig, axes = plt.subplots(2, 1, figsize=(20, 10), sharex=True)
     plot_i_dq_ref_tracking_time(obs, obs_ref, axes, tau=env.tau)
     return obs, obs_ref, acts
+
+
+def rollout_comparison(env, node, tau, init_obs, obs_ref, actions, featurize_node):
+    obs_env = rollout_traj_env(env, init_obs, actions)
+    obs_node = rollout_traj_node(node, featurize_node, init_obs, actions, tau)
+    fig, axes = plt.subplots(2, 1, figsize=(20, 10), sharex=True)
+    plot_2_i_dq_ref_tracking_time(obs_env, obs_node, obs_ref, axes)
+    return obs_env, obs_node
