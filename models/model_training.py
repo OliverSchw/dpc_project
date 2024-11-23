@@ -8,6 +8,10 @@ import optax
 from utils.interactions import vmap_rollout_traj_node
 from tqdm import tqdm
 
+import matplotlib.pyplot as plt
+from utils.visualization import plot_2_i_dq_comparison
+from utils.evaluation import rollout_traj_node
+
 
 @eqx.filter_value_and_grad
 def grad_loss(model, true_obs, actions, tau, featurize):
@@ -120,25 +124,46 @@ def fit_non_jit(
     featurize,
     train_steps,
     sequence_len,
-    data_gen_sin,
+    train_data_gen_sin,
+    val_data_gen_sin,
     rng,
     optim,
     init_opt_state,
+    plot_every,
 ):
     key = rng
     model_state = model
     opt_state = init_opt_state
-    losses = []
+    train_losses = []
+    val_losses = []
 
     for i in tqdm(range(train_steps)):
 
-        observations, actions, key = data_generation(data_gen_sin, sequence_len, key)
+        observations, actions, key = data_generation(train_data_gen_sin, sequence_len, key)
 
         model_state, opt_state, loss = make_step(model_state, observations, actions, tau, featurize, opt_state, optim)
 
-        losses.append(loss)
+        train_losses.append(loss)
 
-    return model_state, opt_state, key, losses
+        # val_observations, val_actions, key = data_generation(val_data_gen_sin, sequence_len, key)
+
+        # val_loss, _ = grad_loss(model_state, val_observations, val_actions, tau, featurize)
+
+        # val_losses.append(val_loss)
+
+        if i is not None and i % plot_every == 0 and i > 0:
+            val_observations, val_actions, key = data_generation(val_data_gen_sin, sequence_len, key)
+
+            val_loss, _ = grad_loss(model_state, val_observations, val_actions, tau, featurize)
+
+            val_losses.append(val_loss)
+            print("Current val_loss:", val_loss)
+            obs_node = rollout_traj_node(model_state, featurize, val_observations[0, 0, :], val_actions[0], tau)
+            fig, axes = plt.subplots(2, 1, figsize=(10, 5), sharex=True)
+            plot_2_i_dq_comparison(val_observations[0, :, :], obs_node, axes)
+            plt.show()
+
+    return model_state, opt_state, key, train_losses, val_losses
 
 
 class ModelTrainer(eqx.Module):
@@ -146,24 +171,27 @@ class ModelTrainer(eqx.Module):
     batch_size: jnp.int32
     sequence_len: jnp.int32
     featurize: Callable
-    data_gen_sin: Callable
+    train_data_gen_sin: Callable
+    val_data_gen_sin: Callable
     model_optimizer: optax._src.base.GradientTransformationExtraArgs
     tau: jnp.float32
 
-    def fit_non_jit(self, model, opt_state, key):
+    def fit_non_jit(self, model, opt_state, key, plot_every=None):
         assert self.batch_size == key.shape[0]
-        final_model, final_opt_state, final_key, losses = fit_non_jit(
+        final_model, final_opt_state, final_key, train_losses, val_losses = fit_non_jit(
             model,
             self.tau,
             self.featurize,
             self.train_steps,
             self.sequence_len,
-            self.data_gen_sin,
+            self.train_data_gen_sin,
+            self.val_data_gen_sin,
             key,
             self.model_optimizer,
             opt_state,
+            plot_every,
         )
-        return final_model, final_opt_state, final_key, losses
+        return final_model, final_opt_state, final_key, train_losses, val_losses
 
     # @eqx.filter_jit
     # def fit(self, model, k, observations, actions, opt_state, loader_key):
@@ -188,13 +216,3 @@ class ModelTrainer(eqx.Module):
     #         init_opt_state=opt_state,
     #     )
     #     return final_model, final_opt_state, loader_key
-
-
-# NODE learning di_dt or directly i
-# deadtime = 0?
-# long array or batched data
-# limited predefined data traj? if yes probably long array more suitable
-
-# if generating data while training batched_data version like in policy training
-#   -> same sequence length for model and policy training
-#   -> same batch_size for model and policy training
