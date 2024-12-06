@@ -151,16 +151,16 @@ def fit_non_jit(
 
         # val_losses.append(val_loss)
 
-        if i is not None and i % plot_every == 0 and i > 0:
+        if i is not None and i % plot_every == 0:
             val_observations, val_actions, key = data_generation(val_data_gen_sin, sequence_len, key)
 
             val_loss, _ = grad_loss(model_state, val_observations, val_actions, tau, featurize)
 
             val_losses.append(val_loss)
             print("Current val_loss:", val_loss)
-            obs_node = rollout_traj_node(model_state, featurize, val_observations[0, 0, :], val_actions[0], tau)
+            obs_nodes = vmap_rollout_traj_node(model_state, featurize, val_observations[:2, 0, :], val_actions[:2], tau)
             fig, axes = plt.subplots(2, 1, figsize=(10, 5), sharex=True)
-            plot_2_i_dq_comparison(val_observations[0, :, :], obs_node, axes)
+            plot_2_i_dq_comparison(val_observations[0, :, :], obs_nodes[0, :, :], axes)
             plt.show()
 
     return model_state, opt_state, key, train_losses, val_losses

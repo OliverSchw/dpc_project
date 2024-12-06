@@ -138,3 +138,9 @@ def vmap_rollout_traj_node(model, featurize, init_obs, actions, tau):
         model, featurize, init_obs, actions, tau
     )
     return observations
+
+
+@eqx.filter_jit
+def vmap_rollout_traj_env(env, init_obs, actions):
+    observations = jax.vmap(rollout_traj_env, in_axes=(None, 0, 0))(env, init_obs, actions)
+    return observations
