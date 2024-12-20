@@ -185,6 +185,7 @@ def compute_loss(sim_obs, ref_obs, featurize, ref_loss_fun, penalty_fun, weighti
     ref_loss = ref_loss_fun(feat_obs)
     penalty_loss = penalty_fun(feat_obs)
     loss = (weighting) * ref_loss + (1 - weighting) * penalty_loss
+    loss = jnp.clip(loss, max=1e5)
     return loss
 
 
