@@ -38,6 +38,34 @@ class MLP_tanh(eqx.Module):
         return jax.nn.hard_tanh(self.layers[-1](x))
 
 
+class MLP(eqx.Module):
+
+    layers: list[eqx.nn.Linear]
+    output_activation: Callable = eqx.field(static=True)
+    hidden_activation: Callable = eqx.field(static=True)
+
+    def __init__(
+        self,
+        layer_sizes,
+        key,
+        hidden_activation: Callable = jax.nn.leaky_relu,
+        output_activation: Callable = lambda x: x,
+    ):
+
+        self.layers = []
+        for fan_in, fan_out in zip(layer_sizes[:-1], layer_sizes[1:]):
+            key, subkey = jax.random.split(key)
+            self.layers.append(eqx.nn.Linear(fan_in, fan_out, use_bias=True, key=subkey))
+        self.hidden_activation = hidden_activation
+        self.output_activation = output_activation
+
+    def __call__(self, x):
+
+        for layer in self.layers[:-1]:
+            x = self.hidden_activation(layer(x))
+        return self.output_activation(self.layers[-1](x))
+
+
 class NeuralEulerODE(eqx.Module):
     func: MLP_lin
 
