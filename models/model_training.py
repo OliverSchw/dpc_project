@@ -26,8 +26,8 @@ def grad_loss(model, true_obs, actions, tau, featurize):
 
 
 @eqx.filter_jit
-def make_step(model, observations, actions, tau, featurize, opt_state, optim):
-    loss, grads = grad_loss(model, observations, actions, tau, featurize)
+def make_step(model, observations, actions, tau, featurize, opt_state, optim, loss_func):
+    loss, grads = loss_func(model, observations, actions, tau, featurize)
     updates, opt_state = optim.update(grads, opt_state)
     model = eqx.apply_updates(model, updates)
     return model, opt_state, loss
@@ -116,6 +116,87 @@ def data_generation(data_gen_single, sequence_len, rng):
 #     )
 #     final_model = eqx.combine(static_model_state, final_dynamic_model_state)
 #     return final_model, final_opt_state
+import matplotlib.pyplot as plt
+from matplotlib import cm
+import numpy as np
+
+
+def valid_points(Z, D, Q):
+    def cond(point):
+        return (point[0] ** 2 + point[1] ** 2 - 250**2 <= 0).astype(int)
+
+    z_flat = Z.flatten()
+    points = jnp.array([D.flatten(), Q.flatten()]).T
+    val_points = jax.vmap(cond, in_axes=0)(points)
+    z_flat_val = z_flat * val_points
+    return z_flat_val.reshape(D.shape)
+
+
+def eval_psi_and_L(expert_model):
+    fig = plt.figure(figsize=(6, 10))
+    xx = np.linspace(-250, 0, 26)
+    yy = np.linspace(-250, 250, 51)
+    D, Q = np.meshgrid(xx, yy, indexing="ij")
+    learned_psi = {
+        "Psi_d": expert_model.psi_d_mlp,
+        "Psi_q": expert_model.psi_q_mlp,
+        "L_dd": expert_model.L_dd,
+        "L_dq": expert_model.L_dq,
+        "L_qd": expert_model.L_qd,
+        "L_qq": expert_model.L_qq,
+    }
+
+    for i, name in zip(range(6), ["Psi_d", "Psi_q", "L_dd", "L_dq", "L_qd", "L_qq"]):
+
+        interp = expert_model.motor_env.LUT_interpolators[name]
+        Z = interp((D, Q))
+
+        Z = Z * 1000
+        Z = valid_points(Z, D, Q)
+        ax = fig.add_subplot(6, 3, 3 * i + 1, projection="3d")
+        norm = plt.Normalize(Z.min(), Z.max())
+        colors = cm.viridis(norm(Z))
+        rcount, ccount, _ = colors.shape
+        surf = ax.plot_surface(D, Q, Z, rcount=rcount, ccount=ccount, facecolors=colors, shade=False)
+        surf.set_facecolor((0, 0, 0, 0))
+        ax.azim = 225
+        ax.set_xlabel("i_d in A")
+        ax.set_ylabel("i_q in A")
+        ax.set_title(name + " in mH - LUT")
+
+        mlp = learned_psi[name]
+        z_flatt = jax.vmap(mlp)(
+            jnp.array([D.flatten(), Q.flatten()]).T / expert_model.motor_env.env_properties.physical_constraints.i_d
+        )  #
+        Z_d = z_flatt.reshape(D.shape) * 1000
+
+        Z_d = valid_points(Z_d, D, Q)
+
+        ax = fig.add_subplot(6, 3, 3 * i + 2, projection="3d")
+        norm = plt.Normalize(Z_d.min(), Z_d.max())
+        colors = cm.viridis(norm(Z_d))
+        rcount, ccount, _ = colors.shape
+        surf = ax.plot_surface(D, Q, Z_d, rcount=rcount, ccount=ccount, facecolors=colors, shade=False)
+        surf.set_facecolor((0, 0, 0, 0))
+        ax.azim = 225
+        ax.set_xlabel("i_d in A")
+        ax.set_ylabel("i_q in A")
+        ax.set_title(name + " in mH - learned MLP")
+
+        Z_difference = jnp.abs(Z - Z_d)  # np.abs
+        ax = fig.add_subplot(6, 3, 3 * i + 3, projection="3d")
+        norm = plt.Normalize(Z_difference.min(), Z_difference.max())
+        colors = cm.viridis(norm(Z_difference))
+        rcount, ccount, _ = colors.shape
+        surf = ax.plot_surface(D, Q, Z_difference, rcount=rcount, ccount=ccount, facecolors=colors, shade=False)
+        surf.set_facecolor((0, 0, 0, 0))
+        ax.azim = 225
+        ax.set_xlabel("i_d in A")
+        ax.set_ylabel("i_q in A")
+        ax.set_title("abs. error in mH")
+        ax.ticklabel_format(style="plain")
+
+    fig.show()
 
 
 def fit_non_jit(
@@ -130,6 +211,7 @@ def fit_non_jit(
     optim,
     init_opt_state,
     plot_every,
+    loss_func,
 ):
     key = rng
     model_state = model
@@ -141,7 +223,9 @@ def fit_non_jit(
 
         observations, actions, key = data_generation(train_data_gen_sin, sequence_len, key)
 
-        model_state, opt_state, loss = make_step(model_state, observations, actions, tau, featurize, opt_state, optim)
+        model_state, opt_state, loss = make_step(
+            model_state, observations, actions, tau, featurize, opt_state, optim, loss_func
+        )
 
         train_losses.append(loss)
 
@@ -152,15 +236,17 @@ def fit_non_jit(
         # val_losses.append(val_loss)
 
         if i is not None and i % plot_every == 0:
-            val_observations, val_actions, key = data_generation(val_data_gen_sin, sequence_len, key)
+            print(loss)
+            # val_observations, val_actions, key = data_generation(val_data_gen_sin, sequence_len, key)
 
-            val_loss, _ = grad_loss(model_state, val_observations, val_actions, tau, featurize)
+            # val_loss, _ = grad_loss(model_state, val_observations, val_actions, tau, featurize)
 
-            val_losses.append(val_loss)
-            print("Current val_loss:", val_loss)
-            obs_nodes = vmap_rollout_traj_node(model_state, featurize, val_observations[:2, 0, :], val_actions[:2], tau)
-            fig, axes = plt.subplots(2, 1, figsize=(10, 5), sharex=True)
-            plot_2_i_dq_comparison(val_observations[0, :, :], obs_nodes[0, :, :], axes)
+            # val_losses.append(val_loss)
+            # print("Current val_loss:", val_loss)
+            # obs_nodes = vmap_rollout_traj_node(model_state, featurize, val_observations[:2, 0, :], val_actions[:2], tau)
+            # fig, axes = plt.subplots(2, 1, figsize=(10, 5), sharex=True)
+            # plot_2_i_dq_comparison(val_observations[0, :, :], obs_nodes[0, :, :], axes)
+            eval_psi_and_L(model_state)
             plt.show()
 
     return model_state, opt_state, key, train_losses, val_losses
@@ -175,6 +261,7 @@ class ModelTrainer(eqx.Module):
     val_data_gen_sin: Callable
     model_optimizer: optax._src.base.GradientTransformationExtraArgs
     tau: jnp.float32
+    loss_func: Callable = grad_loss
 
     def fit_non_jit(self, model, opt_state, key, plot_every=None):
         assert self.batch_size == key.shape[0]
@@ -190,6 +277,7 @@ class ModelTrainer(eqx.Module):
             self.model_optimizer,
             opt_state,
             plot_every,
+            self.loss_func,
         )
         return final_model, final_opt_state, final_key, train_losses, val_losses
 
