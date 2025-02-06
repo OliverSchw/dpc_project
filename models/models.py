@@ -4,6 +4,7 @@ import jax
 import jax.numpy as jnp
 import equinox as eqx
 import optax
+import json
 
 
 class MLP_lin(eqx.Module):
@@ -20,22 +21,6 @@ class MLP_lin(eqx.Module):
         for layer in self.layers[:-1]:
             x = jax.nn.leaky_relu(layer(x))
         return self.layers[-1](x)
-
-
-class MLP_tanh(eqx.Module):
-    # TODO different output layers
-    layers: list[eqx.nn.Linear]
-
-    def __init__(self, layer_sizes, key):
-        self.layers = []
-        for fan_in, fan_out in zip(layer_sizes[:-1], layer_sizes[1:]):
-            key, subkey = jax.random.split(key)
-            self.layers.append(eqx.nn.Linear(fan_in, fan_out, use_bias=True, key=subkey))
-
-    def __call__(self, x):
-        for layer in self.layers[:-1]:
-            x = jax.nn.leaky_relu(layer(x))
-        return jax.nn.hard_tanh(self.layers[-1](x))
 
 
 class MLP(eqx.Module):
@@ -88,3 +73,18 @@ class NeuralEulerODE(eqx.Module):
         _, observations = jax.lax.scan(body_fun, init_obs, actions)
         observations = jnp.concatenate([init_obs[None, :], observations], axis=0)
         return observations
+
+
+def save_model(filename, hyperparams, model):
+    with open(filename, "wb") as f:
+        hyperparam_str = json.dumps(hyperparams)
+        f.write((hyperparam_str + "\n").encode())
+        eqx.tree_serialise_leaves(f, model)
+
+
+def load_model(filename, model_class):
+    with open(filename, "rb") as f:
+        hyperparams = json.loads(f.readline().decode())
+        hyperparams["key"] = jnp.array(hyperparams["key"], dtype=jnp.uint32)
+        model = model_class(**hyperparams)
+        return eqx.tree_deserialise_leaves(f, model)
