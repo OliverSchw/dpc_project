@@ -14,7 +14,7 @@ from utils.evaluation import rollout_traj_node
 
 
 @eqx.filter_value_and_grad
-def grad_loss(model, true_obs, actions, tau, featurize):
+def grad_loss_mse(model, true_obs, actions, tau, featurize):
 
     feat_pred_obs = vmap_rollout_traj_node(model, featurize, true_obs[:, 0, :], actions, tau)
     # create vmap_rollout_traj_node
@@ -87,7 +87,7 @@ class ModelTrainer(eqx.Module):
     validation: Callable
     model_optimizer: optax._src.base.GradientTransformationExtraArgs
     tau: jnp.float32
-    loss_func: Callable = grad_loss
+    loss_func: Callable = grad_loss_mse
 
     def fit(self, model, opt_state, key, validate_every=None):
         assert self.batch_size == key.shape[0]

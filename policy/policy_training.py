@@ -20,6 +20,7 @@ from utils.interactions import (
     vmap_rollout_traj_env,
 )
 from models.model_training import make_step as make_step_train_node
+from models.model_training import grad_loss_mse
 
 # loss construct from (loss and soft_pen) (done)
 # rollout (done)
@@ -199,17 +200,16 @@ def vmap_compute_loss(sim_obs, ref_obs, featurize, ref_loss_fun, penalty_fun, we
 
 
 @eqx.filter_jit
-def data_generation(env, reset_env, data_gen_single, rng, traj_len=None):
+def data_generation(env, data_gen_single, rng, traj_len=None):
     # TODO implement ref_traj other than constants -> traj_len
-    init_obs, ref_obs, key = jax.vmap(data_gen_single, in_axes=(None, None, 0, None))(env, reset_env, rng, traj_len)
+    init_obs, ref_obs, key = jax.vmap(data_gen_single, in_axes=(None, 0, None))(env, rng, traj_len)
     return init_obs, ref_obs, key
 
 
-def fit_on_env_non_jit(
+def fit_on_env(
     policy,
     train_steps,
     env,
-    reset_env,
     data_gen_sin,
     rng,
     horizon_length,
@@ -218,16 +218,19 @@ def fit_on_env_non_jit(
     penalty_fun,
     optim,
     init_opt_state,
+    validation,
+    validate_every,
     ref_loss_weight=1,
 ):
     key = rng
     policy_state = policy
     opt_state = init_opt_state
     losses = []
+    val_losses = []
 
     for i in tqdm(range(train_steps)):
 
-        init_obs, ref_obs, key = data_generation(env, reset_env, data_gen_sin, key)
+        init_obs, ref_obs, key = data_generation(env, data_gen_sin, key)
 
         policy_state, opt_state, loss = make_step(
             policy_state,
@@ -244,16 +247,23 @@ def fit_on_env_non_jit(
         )
 
         losses.append(loss)
-    return policy_state, opt_state, key, losses
+
+        if validate_every is not None and i % validate_every == 0:  # and i > 0
+            val_loss, terminate_learning = validation(env, policy_state, key)
+
+            val_losses.append(val_loss)
+            if terminate_learning:
+                break
+
+    return policy_state, opt_state, key, losses, val_losses
 
 
-def fit_on_node_non_jit(
+def fit_on_node(
     policy,
     train_steps,
     node,
     tau,
     featurize_node,
-    reset_env,
     data_gen_sin,
     rng,
     horizon_length,
@@ -262,16 +272,19 @@ def fit_on_node_non_jit(
     penalty_fun,
     optim,
     init_opt_state,
+    validation,
+    validate_every,
     ref_loss_weight=1,
 ):
     key = rng
     policy_state = policy
     opt_state = init_opt_state
     losses = []
+    val_losses = []
 
     for i in tqdm(range(train_steps)):
 
-        init_obs, ref_obs, key = data_generation(node, reset_env, data_gen_sin, key)
+        init_obs, ref_obs, key = data_generation(node, data_gen_sin, key)
 
         policy_state, opt_state, loss = make_step_node(
             policy_state,
@@ -289,7 +302,15 @@ def fit_on_node_non_jit(
             ref_loss_weight,
         )
         losses.append(loss)
-    return policy_state, opt_state, key, losses
+
+        if validate_every is not None and i % validate_every == 0:  # and i > 0
+            val_loss, terminate_learning = validation(node, policy_state, key)
+
+            val_losses.append(val_loss)
+            if terminate_learning:
+                break
+
+    return policy_state, opt_state, key, losses, val_losses
 
 
 def data_slice(rng, obs_long, acts_long, sequence_len):
@@ -311,7 +332,6 @@ def fit_policy_and_env(
     node,
     tau,
     featurize_node,
-    reset_env,
     data_gen_sin,
     rng,
     horizon_length,
@@ -322,8 +342,8 @@ def fit_policy_and_env(
     node_optim,
     pol_init_opt_state,
     node_init_opt_state,
-    val_data_gen_sin,
-    plot_every,
+    validation,
+    validate_every,
     ref_loss_weight=1,
 ):
     key = rng
@@ -333,10 +353,11 @@ def fit_policy_and_env(
     policy_opt_state = pol_init_opt_state
     policy_losses = []
     node_losses = []
+    val_losses = []
 
     for i in tqdm(range(train_steps)):
 
-        init_obs, ref_obs, key = data_generation(env, reset_env, data_gen_sin, key)
+        init_obs, ref_obs, key = data_generation(env, data_gen_sin, key)
 
         # discuss wether case 1: policy acts directly on env
         #               case 2: policy acts on node and resulting actions applied to env
@@ -353,7 +374,7 @@ def fit_policy_and_env(
             obs_short, acts_short, key = jax.vmap(data_slice, in_axes=(0, 0, 0, None))(key, observations, actions, 1)
 
             node_state, node_opt_state, node_loss = make_step_train_node(
-                node_state, obs_short, acts_short, tau, featurize_node, node_opt_state, node_optim
+                node_state, obs_short, acts_short, tau, featurize_node, node_opt_state, node_optim, grad_loss_mse
             )
 
         policy_state, policy_opt_state, policy_loss = make_step_node_weight(
@@ -375,76 +396,14 @@ def fit_policy_and_env(
 
         policy_losses.append(policy_loss)
         node_losses.append(node_loss)
-        if i is not None and i % plot_every == 0:  # and i > 0
-            val_init, val_ref = val_data_gen_sin(env, reset_env, rng, horizon_length)
+        if validate_every is not None and i % validate_every == 0:
+            val_loss, terminate_learning = validation(node_state, policy_state, key)
 
-            fig, axes = plt.subplots(2, 2, figsize=(12, 3), sharex=True)
+            val_losses.append(val_loss)
+            if terminate_learning:
+                break
 
-            axes[0, 0].set_title("Policy on Node")
-            axes[0, 1].set_title("Policy on Env")
-
-            obs_node, acts_node = rollout_traj_node_policy(
-                policy_state, node_state, tau, val_init, val_ref, val_ref.shape[0], featurize, featurize_node
-            )
-            plot_i_dq_ref_tracking_time(obs_node, val_ref, axes[:, 0])
-
-            obs, acts = rollout_traj_env_policy(policy_state, val_init, val_ref, val_ref.shape[0], env, featurize)
-            obs_node_roll = rollout_traj_node(node_state, featurize_node, val_init, acts, tau)
-            plot_2_i_dq_ref_tracking_time(obs, obs_node_roll, val_ref, axes[:, 1], name1="env", name2="acts_on_node")
-
-            plt.show()
-
-    return policy_state, policy_opt_state, node_state, node_opt_state, key, policy_losses, node_losses
-
-
-@eqx.filter_jit
-def fit(
-    policy,
-    train_steps,
-    env,
-    reset_env,
-    data_gen_sin,
-    rng,
-    horizon_length,
-    featurize,
-    ref_loss_fun,
-    penalty_fun,
-    optim,
-    init_opt_state,
-    ref_loss_weight=1,
-):
-
-    dynamic_init_policy_state, static_policy_state = eqx.partition(policy, eqx.is_inexact_array)
-    init_carry = (dynamic_init_policy_state, init_opt_state, rng)
-
-    def body_fun(i, carry):
-        dynamic_policy_state, opt_state, key = carry
-        policy_state = eqx.combine(static_policy_state, dynamic_policy_state)
-
-        init_obs, ref_obs, key = data_generation(env, reset_env, data_gen_sin, key)
-
-        new_policy_state, new_opt_state, _ = make_step(
-            policy_state,
-            env,
-            init_obs,
-            ref_obs,
-            horizon_length,
-            featurize,
-            ref_loss_fun,
-            penalty_fun,
-            optim,
-            opt_state,
-            ref_loss_weight=ref_loss_weight,
-        )
-        new_dynamic_policy_state, new_static_policy_state = eqx.partition(new_policy_state, eqx.is_inexact_array)
-        assert eqx.tree_equal(static_policy_state, new_static_policy_state) is True
-        return (new_dynamic_policy_state, new_opt_state, key)
-
-    final_dynamic_policy_state, final_opt_state, final_key = jax.lax.fori_loop(
-        lower=0, upper=train_steps, body_fun=body_fun, init_val=init_carry
-    )
-    final_policy = eqx.combine(static_policy_state, final_dynamic_policy_state)
-    return final_policy, final_opt_state, final_key
+    return policy_state, policy_opt_state, node_state, node_opt_state, key, policy_losses, node_losses, val_losses
 
 
 # DPCTrainer
@@ -452,22 +411,20 @@ class DPCTrainer(eqx.Module):
     batch_size: jnp.int32
     train_steps: jnp.int32
     horizon_length: jnp.int32
-    reset_env: Callable
     data_gen_sin: Callable
     featurize: Callable
     policy_optimizer: optax._src.base.GradientTransformationExtraArgs
     ref_loss: Callable
     constr_penalty: Callable
     ref_loss_weight: jnp.float32
+    validation: Callable = lambda model, policy, key: (0, False)
 
-    # @eqx.filter_jit
-    def fit_on_env(self, policy, env, key, opt_state):
+    def fit_on_env(self, policy, env, key, opt_state, validate_every=None):
         assert self.batch_size == key.shape[0]
-        final_policy, final_opt_state, final_key = fit(
+        final_policy, final_opt_state, final_key, losses, val_losses = fit_on_env(
             policy=policy,
             train_steps=self.train_steps,
             env=env,
-            reset_env=self.reset_env,
             data_gen_sin=self.data_gen_sin,
             rng=key,
             horizon_length=self.horizon_length,
@@ -476,40 +433,21 @@ class DPCTrainer(eqx.Module):
             penalty_fun=self.constr_penalty,
             optim=self.policy_optimizer,
             init_opt_state=opt_state,
+            validation=self.validation,
+            validate_every=validate_every,
             ref_loss_weight=self.ref_loss_weight,
         )
 
-        return final_policy, final_opt_state, final_key, None
+        return final_policy, final_opt_state, final_key, losses, val_losses  #
 
-    def fit_non_jit(self, policy, env, key, opt_state):
+    def fit_on_node(self, policy, node, tau, featurize_node, key, opt_state, validate_every=None):
         assert self.batch_size == key.shape[0]
-        final_policy, final_opt_state, final_key, losses = fit_on_env_non_jit(
-            policy=policy,
-            train_steps=self.train_steps,
-            env=env,
-            reset_env=self.reset_env,
-            data_gen_sin=self.data_gen_sin,
-            rng=key,
-            horizon_length=self.horizon_length,
-            featurize=self.featurize,
-            ref_loss_fun=self.ref_loss,
-            penalty_fun=self.constr_penalty,
-            optim=self.policy_optimizer,
-            init_opt_state=opt_state,
-            ref_loss_weight=self.ref_loss_weight,
-        )
-
-        return final_policy, final_opt_state, final_key, losses  #
-
-    def fit_on_node_non_jit(self, policy, node, tau, featurize_node, key, opt_state):
-        assert self.batch_size == key.shape[0]
-        final_policy, final_opt_state, final_key, losses = fit_on_node_non_jit(
+        final_policy, final_opt_state, final_key, losses, val_losses = fit_on_node(
             policy=policy,
             train_steps=self.train_steps,
             node=node,
             tau=tau,
             featurize_node=featurize_node,
-            reset_env=self.reset_env,
             data_gen_sin=self.data_gen_sin,
             rng=key,
             horizon_length=self.horizon_length,
@@ -518,11 +456,13 @@ class DPCTrainer(eqx.Module):
             penalty_fun=self.constr_penalty,
             optim=self.policy_optimizer,
             init_opt_state=opt_state,
+            validation=self.validation,
+            validate_every=validate_every,
             ref_loss_weight=self.ref_loss_weight,
         )
-        return final_policy, final_opt_state, final_key, losses
+        return final_policy, final_opt_state, final_key, losses, val_losses
 
-    def fit_policy_and_env(
+    def fit_policy_and_node(
         self,
         policy,
         env,
@@ -533,11 +473,10 @@ class DPCTrainer(eqx.Module):
         pol_opt_state,
         node_optimizer,
         node_opt_state,
-        val_data_gen_sin,
-        plot_every,
+        validate_every=None,
     ):
         assert self.batch_size == key.shape[0]
-        policy_state, policy_opt_state, node_state, node_opt_state, key, policy_losses, node_losses = (
+        policy_state, policy_opt_state, node_state, node_opt_state, key, policy_losses, node_losses, val_losses = (
             fit_policy_and_env(
                 policy=policy,
                 train_steps=self.train_steps,
@@ -545,7 +484,6 @@ class DPCTrainer(eqx.Module):
                 node=node,
                 tau=tau,
                 featurize_node=featurize_node,
-                reset_env=self.reset_env,
                 data_gen_sin=self.data_gen_sin,
                 rng=key,
                 horizon_length=self.horizon_length,
@@ -556,9 +494,9 @@ class DPCTrainer(eqx.Module):
                 node_optim=node_optimizer,
                 pol_init_opt_state=pol_opt_state,
                 node_init_opt_state=node_opt_state,
-                val_data_gen_sin=val_data_gen_sin,
-                plot_every=plot_every,
+                validation=self.validation,
+                validate_every=validate_every,
                 ref_loss_weight=self.ref_loss_weight,
             )
         )
-        return policy_state, policy_opt_state, node_state, node_opt_state, key, policy_losses, node_losses
+        return policy_state, policy_opt_state, node_state, node_opt_state, key, policy_losses, node_losses, val_losses
